@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import secrets
 from datetime import timedelta
 
@@ -13,6 +14,8 @@ from django.utils import timezone
 
 from accounts.models import EmailOtp
 from notifications.email_service import first_name, render_email, send_multipart_email
+
+logger = logging.getLogger("forfaitify.otp")
 
 OTP_TTL = timedelta(minutes=10)
 MAX_ATTEMPTS = 5
@@ -127,10 +130,12 @@ def issue_otp(email: str, purpose: str) -> None:
     try:
         _deliver(email, purpose, code)
     except Exception:
+        logger.exception("OTP delivery failed email=%s purpose=%s", email, purpose)
         EmailOtp.objects.filter(email=email, purpose=purpose, consumed_at__isnull=True).update(
             consumed_at=timezone.now()
         )
         raise
+    logger.info("OTP delivered email=%s purpose=%s", email, purpose)
     _bump_send(email, purpose)
 
 

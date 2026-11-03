@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 import re
 from email.mime.image import MIMEImage
 from pathlib import Path
@@ -13,6 +14,8 @@ from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 
 from notifications.email_copy import compose
+
+logger = logging.getLogger("forfaitify.email")
 
 
 BUCKET_TEMPLATES = {
@@ -154,10 +157,18 @@ def send_via_zoho_cpaas(
 ) -> str:
     api_key = getattr(settings, "ZOHO_CPAAS_API_KEY", "")
     if not api_key:
+        logger.error("Zoho CPaaS send aborted: ZOHO_CPAAS_API_KEY is not set")
         raise RuntimeError("ZOHO_CPAAS_API_KEY is not set.")
     base = getattr(settings, "ZOHO_CPAAS_BASE_URL", "https://cpaas.zoho.com").rstrip("/")
     address, name = parse_from_address(
         getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@forfaitify.com")
+    )
+    logger.info(
+        "Zoho CPaaS send start to=%s from=%s base=%s ref=%s",
+        to_email,
+        address,
+        base,
+        client_reference or "-",
     )
     body: dict = {
         "from": {"address": address, "name": name},
@@ -202,10 +213,20 @@ def send_via_zoho_cpaas(
         detail = ""
         if isinstance(payload, dict) and isinstance(payload.get("data"), dict):
             detail = payload["data"].get("message") or payload["data"].get("error_code") or ""
+        logger.error(
+            "Zoho CPaaS email failed status=%s to=%s from=%s detail=%s payload=%s",
+            response.status_code,
+            to_email,
+            address,
+            detail or message,
+            payload,
+        )
         raise RuntimeError(
             f"Zoho CPaaS email failed ({response.status_code}): {detail or message}"
         )
-    return _zoho_request_id(payload)
+    request_id = _zoho_request_id(payload)
+    logger.info("Zoho CPaaS email sent to=%s zoho_request_id=%s", to_email, request_id or "-")
+    return request_id
 
 
 def send_multipart_email(
@@ -228,6 +249,13 @@ def send_multipart_email(
         )
 
     from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@forfaitify.com")
+    logger.info(
+        "Django email send start backend=%s to=%s from=%s ref=%s",
+        getattr(settings, "EMAIL_BACKEND", "-"),
+        to_email,
+        from_email,
+        client_reference or "-",
+    )
     headers = {}
     if unsubscribe_url:
         headers["List-Unsubscribe"] = f"<{unsubscribe_url}>"
@@ -246,5 +274,10 @@ def send_multipart_email(
         image.add_header("Content-ID", f"<{LOGO_CID}>")
         image.add_header("Content-Disposition", "inline", filename="forfaitify-logo.png")
         msg.attach(image)
-    msg.send(fail_silently=False)
+    try:
+        msg.send(fail_silently=False)
+    except Exception:
+        logger.exception("Django email send failed to=%s from=%s", to_email, from_email)
+        raise
+    logger.info("Django email sent to=%s subject=%s", to_email, subject)
     return ""
