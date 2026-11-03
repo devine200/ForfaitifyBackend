@@ -1,4 +1,6 @@
 import json
+import logging
+import uuid
 
 from django.conf import settings
 from django.db import IntegrityError
@@ -19,6 +21,8 @@ from kyc.serializers import (
     KycStatusSerializer,
 )
 from utils import didit
+
+logger = logging.getLogger("forfaitify.kyc")
 
 
 class KycSessionView(APIView):
@@ -135,7 +139,17 @@ class DiditWebhookView(APIView):
         if event.session_id:
             kyc = KycRecord.objects.filter(provider_session_id=event.session_id).first()
         if not kyc and event.vendor_data:
-            kyc = KycRecord.objects.filter(user_id=event.vendor_data).first()
+            try:
+                user_id = uuid.UUID(str(event.vendor_data))
+            except ValueError:
+                logger.warning(
+                    "Didit webhook ignored: vendor_data is not a UUID session_id=%s vendor_data=%s status=%s",
+                    event.session_id or "-",
+                    event.vendor_data,
+                    event.review_status,
+                )
+            else:
+                kyc = KycRecord.objects.filter(user_id=user_id).first()
         if kyc:
             kyc.provider_status = event.review_status
             if event.session_id:
@@ -170,6 +184,13 @@ class DiditWebhookView(APIView):
                     key("notifications"),
                 ],
                 email=False,
+            )
+        else:
+            logger.info(
+                "Didit webhook acknowledged with no matching KYC record session_id=%s vendor_data=%s status=%s",
+                event.session_id or "-",
+                event.vendor_data or "-",
+                event.review_status,
             )
         return Response({"ok": True})
 
