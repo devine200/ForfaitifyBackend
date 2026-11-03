@@ -4,6 +4,7 @@ from datetime import timedelta
 from pathlib import Path
 import os
 
+from corsheaders.defaults import default_headers
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -133,6 +134,10 @@ CORS_ALLOWED_ORIGINS = [
     if o.strip()
 ]
 CORS_ALLOW_CREDENTIALS = True
+# Deposit/withdraw send Idempotency-Key; default CORS header list omits it.
+CORS_ALLOW_HEADERS = list(default_headers) + [
+    "idempotency-key",
+]
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
