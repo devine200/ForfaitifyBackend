@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="color-scheme" content="light" />
+  <meta name="supported-color-schemes" content="light" />
+  <title>{{ headline|default:title }}</title>
+  <!--[if mso]>
+  <noscript>
+    <xml>
+      <o:OfficeDocumentSettings>
+        <o:PixelsPerInch>96</o:PixelsPerInch>
+      </o:OfficeDocumentSettings>
+    </xml>
+  </noscript>
+  <![endif]-->
+</head>
+<body style="margin:0;padding:0;background-color:#F4F7FC;color:#060606;">
+  <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#F4F7FC;">
+    {{ preheader|default:body }}&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;
+  </div>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#F4F7FC" style="background-color:#F4F7FC;">
+    <tr>
+      <td align="center" style="padding:32px 12px;">
+        <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:600px;background-color:#FFFFFF;border:1px solid #E5E5E5;">
+          <tr>
+            <td bgcolor="#FFFFFF" style="padding:28px 32px 20px;background-color:#FFFFFF;">
+              <img src="cid:forfaitify-logo" width="166" height="45" alt="Forfaitify" style="display:block;border:0;outline:none;text-decoration:none;width:166px;height:45px;" />
+            </td>
+          </tr>
+          <tr>
+            <td bgcolor="#39FF14" height="3" style="height:3px;background-color:#39FF14;font-size:0;line-height:0;">&nbsp;</td>
+          </tr>
+          <tr>
+            <td bgcolor="#FFFFFF" style="padding:32px 32px 8px;background-color:#FFFFFF;font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif;">
+              {% if eyebrow %}
+              <p style="margin:0 0 12px;font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif;font-size:12px;line-height:16px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#1248D7;">{{ eyebrow }}</p>
+              {% endif %}
+              <h1 style="margin:0 0 16px;font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif;font-size:26px;line-height:34px;font-weight:700;color:#051641;">{{ headline|default:title }}</h1>
+              <p style="margin:0 0 16px;font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif;font-size:16px;line-height:26px;color:#3C3C3C;">
+                {% if recipient_name %}Hello {{ recipient_name }},{% else %}Hello,{% endif %}
+              </p>
+              <p style="margin:0 0 24px;font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif;font-size:16px;line-height:26px;color:#3C3C3C;">{{ body }}</p>
+              {% if code %}
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin:0 0 24px;">
+                <tr>
+                  <td align="center" bgcolor="#F6F8FE" style="padding:22px 16px;background-color:#F6F8FE;border:1px solid #E7EDFB;">
+                    <p style="margin:0 0 8px;font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif;font-size:12px;line-height:16px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#777777;">Your code</p>
+                    <p style="margin:0;font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif;font-size:32px;line-height:40px;font-weight:800;letter-spacing:0.28em;color:#1248D7;">{{ code }}</p>
+                  </td>
+                </tr>
+              </table>
+              {% endif %}
+              {% if facts %}
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin:0 0 28px;border:1px solid #E5E5E5;">
+                {% for fact in facts %}
+                <tr>
+                  <td bgcolor="{% if forloop.counter|divisibleby:2 %}#FCFCFC{% else %}#F6F8FE{% endif %}" style="padding:14px 16px;background-color:{% if forloop.counter|divisibleby:2 %}#FCFCFC{% else %}#F6F8FE{% endif %};border-bottom:1px solid #E5E5E5;font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif;font-size:13px;line-height:18px;font-weight:600;color:#777777;width:42%;">{{ fact.label }}</td>
+                  <td bgcolor="{% if forloop.counter|divisibleby:2 %}#FCFCFC{% else %}#F6F8FE{% endif %}" style="padding:14px 16px;background-color:{% if forloop.counter|divisibleby:2 %}#FCFCFC{% else %}#F6F8FE{% endif %};border-bottom:1px solid #E5E5E5;font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;line-height:22px;font-weight:700;color:#060606;">{{ fact.value }}</td>
+                </tr>
+                {% endfor %}
+              </table>
+              {% endif %}
+              {% block extra %}{% endblock %}
+              {% if cta_url %}
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:0 0 16px;">
+                <tr>
+                  <td bgcolor="#1248D7" style="background-color:#1248D7;border-radius:6px;mso-padding-alt:0;">
+                    <!--[if mso]>
+                    <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="{{ cta_url }}" style="height:48px;v-text-anchor:middle;width:240px;" arcsize="8%" strokecolor="#1248D7" fillcolor="#1248D7">
+                      <w:anchorlock/>
+                      <center style="color:#FFFFFF;font-family:Arial,sans-serif;font-size:15px;font-weight:bold;">{{ cta_label|default:"View in Forfaitify" }}</center>
+                    </v:roundrect>
+                    <![endif]-->
+                    <!--[if !mso]><!-->
+                    <a href="{{ cta_url }}" style="display:inline-block;padding:14px 22px;font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;line-height:20px;font-weight:700;color:#FFFFFF;text-decoration:none;">{{ cta_label|default:"View in Forfaitify" }}</a>
+                    <!--<![endif]-->
+                  </td>
+                </tr>
+              </table>
+              <p style="margin:0 0 8px;font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif;font-size:13px;line-height:20px;color:#777777;">
+                Or copy this link into your browser:<br />
+                <a href="{{ cta_url }}" style="color:#1248D7;word-break:break-all;">{{ cta_url }}</a>
+              </p>
+              {% endif %}
+            </td>
+          </tr>
+          <tr>
+            <td bgcolor="#FCFCFC" style="padding:20px 32px 28px;background-color:#FCFCFC;border-top:1px solid #E5E5E5;font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif;">
+              <p style="margin:0 0 10px;font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif;font-size:13px;line-height:20px;color:#777777;">{{ why }}</p>
+              <p style="margin:0 0 10px;font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif;font-size:13px;line-height:20px;color:#777777;">
+                {% if show_prefs %}
+                <a href="{{ prefs_url }}" style="color:#1248D7;text-decoration:underline;">Notification settings</a>
+                &nbsp;&middot;&nbsp;
+                {% endif %}
+                <a href="{{ support_url }}" style="color:#1248D7;text-decoration:underline;">Contact support</a>
+              </p>
+              <p style="margin:0;font-family:'Plus Jakarta Sans','Segoe UI',Helvetica,Arial,sans-serif;font-size:12px;line-height:18px;color:#777777;">Forfaitify &middot; Liquidity for merchants. Yield for investors.</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

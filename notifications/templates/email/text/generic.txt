@@ -1,0 +1,21 @@
+Forfaitify
+
+{% if recipient_name %}Hello {{ recipient_name }},{% else %}Hello,{% endif %}
+
+{{ headline|default:title }}
+
+{{ body }}
+{% if code %}
+
+Your code: {{ code }}
+{% endif %}
+{% for fact in facts %}
+{{ fact.label }}: {{ fact.value }}
+{% endfor %}
+{% if cta_url %}
+{{ cta_label|default:"View in Forfaitify" }}: {{ cta_url }}
+{% endif %}
+
+{{ why }}
+{% if show_prefs %}Notification settings: {{ prefs_url }}
+{% endif %}Support: {{ support_url }}

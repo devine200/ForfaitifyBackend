@@ -1,0 +1,14 @@
+Django>=5.2,<6
+djangorestframework>=3.18
+django-cors-headers>=4.9
+djangorestframework-simplejwt>=5.5
+python-dotenv>=1.0
+httpx>=0.28
+Pillow>=11.0
+channels>=4.2
+channels-redis>=4.2
+celery[redis]>=5.4
+uvicorn[standard]>=0.34
+redis>=5.0
+dj-database-url>=2.3
+psycopg[binary]>=3.2
