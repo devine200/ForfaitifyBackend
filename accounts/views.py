@@ -96,7 +96,7 @@ class RegisterView(APIView):
                         },
                         status=status.HTTP_201_CREATED,
                     )
-                ensure_profile(user, role)
+                ensure_profile(user, role, business_name=data.get("business_name"))
                 return Response(
                     {
                         "detail": "Merchant access was added to your account. Sign in to continue.",
@@ -111,7 +111,7 @@ class RegisterView(APIView):
             user.is_active = False
             user.save()
 
-        ensure_profile(user, role)
+        ensure_profile(user, role, business_name=data.get("business_name"))
         user.set_password(data["password"])
         user.save(update_fields=["password"])
 

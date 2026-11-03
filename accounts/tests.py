@@ -14,6 +14,7 @@ ADULT = {
     "phone": "+2348000000000",
     "date_of_birth": "1990-05-01",
     "role": "merchant",
+    "business_name": "Ada Trading Co",
 }
 
 
@@ -29,6 +30,20 @@ class RegistrationTests(TestCase):
         self.assertFalse(User.objects.filter(email=ADULT["email"]).exists())
 
     @patch("accounts.views.issue_otp")
+    def test_merchant_registration_saves_business_name(self, _otp):
+        created = self.client.post("/api/v1/auth/register", ADULT, format="json")
+        self.assertEqual(created.status_code, 201)
+        user = User.objects.get(email=ADULT["email"])
+        self.assertTrue(user.has_merchant)
+        self.assertEqual(user.merchant_profile.business_name, "Ada Trading Co")
+
+    def test_merchant_registration_requires_business_name(self):
+        payload = {k: v for k, v in ADULT.items() if k != "business_name"}
+        response = self.client.post("/api/v1/auth/register", payload, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("business_name", response.data)
+
+    @patch("accounts.views.issue_otp")
     def test_same_email_can_add_the_other_role(self, _otp):
         created = self.client.post("/api/v1/auth/register", ADULT, format="json")
         self.assertEqual(created.status_code, 201)
@@ -39,7 +54,15 @@ class RegistrationTests(TestCase):
 
         added = self.client.post(
             "/api/v1/auth/register",
-            {**ADULT, "role": "investor"},
+            {
+                "email": ADULT["email"],
+                "password": ADULT["password"],
+                "full_name": ADULT["full_name"],
+                "country": ADULT["country"],
+                "phone": ADULT["phone"],
+                "date_of_birth": ADULT["date_of_birth"],
+                "role": "investor",
+            },
             format="json",
         )
         self.assertEqual(added.status_code, 201)
@@ -71,7 +94,15 @@ class RegistrationTests(TestCase):
 
         added = self.client.post(
             "/api/v1/auth/register",
-            {**ADULT, "role": "investor", "date_of_birth": "1992-03-04"},
+            {
+                "email": ADULT["email"],
+                "password": ADULT["password"],
+                "full_name": ADULT["full_name"],
+                "country": ADULT["country"],
+                "phone": ADULT["phone"],
+                "date_of_birth": "1992-03-04",
+                "role": "investor",
+            },
             format="json",
         )
         self.assertEqual(added.status_code, 201, added.data)

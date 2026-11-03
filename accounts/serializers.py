@@ -33,6 +33,7 @@ class RegisterSerializer(serializers.Serializer):
     phone = serializers.CharField(max_length=64)
     date_of_birth = serializers.DateField()
     role = serializers.ChoiceField(choices=["merchant", "investor"])
+    business_name = serializers.CharField(max_length=255, required=False, allow_blank=True)
 
     def validate_date_of_birth(self, value: date):
         if value > timezone.localdate():
@@ -40,6 +41,18 @@ class RegisterSerializer(serializers.Serializer):
         if not is_at_least_18(value):
             raise serializers.ValidationError("You must be at least 18 years old.")
         return value
+
+    def validate(self, attrs):
+        if attrs.get("role") == "merchant":
+            name = (attrs.get("business_name") or "").strip()
+            if not name:
+                raise serializers.ValidationError(
+                    {"business_name": "Business name is required for merchant accounts."}
+                )
+            attrs["business_name"] = name
+        else:
+            attrs.pop("business_name", None)
+        return attrs
 
 
 class EmailOtpSerializer(serializers.Serializer):
@@ -172,9 +185,12 @@ def issue_tokens_for(user: User) -> dict:
     }
 
 
-def ensure_profile(user: User, role: str):
+def ensure_profile(user: User, role: str, *, business_name: str | None = None):
     if role == "merchant":
-        MerchantProfile.objects.get_or_create(user=user)
+        profile, _ = MerchantProfile.objects.get_or_create(user=user)
+        if business_name:
+            profile.business_name = business_name
+            profile.save(update_fields=["business_name", "updated_at"])
     elif role == "investor":
         InvestorProfile.objects.get_or_create(user=user)
     KycRecord.objects.get_or_create(user=user, verification_kind="")
