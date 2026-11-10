@@ -29,6 +29,8 @@ class WebhookEvent:
     vendor_data: str
     review_status: str
     raw: dict[str, Any]
+    liveness_status: str = ""
+    liveness_score: float | None = None
 
 
 # Didit status strings are case-sensitive.
@@ -106,9 +108,36 @@ def create_session(*, user_id: str, workflow_id: str, callback_url: str) -> Didi
     return DiditSession(session_id=session_id, url=url, status=map_status(data.get("status")))
 
 
+def _decision_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    decision = payload.get("decision")
+    if isinstance(decision, dict):
+        return decision
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    nested = data.get("decision")
+    return nested if isinstance(nested, dict) else {}
+
+
+def extract_liveness(payload: dict[str, Any]) -> tuple[str, float | None]:
+    """Primary liveness_checks[] item from a Didit decision payload."""
+    decision = _decision_from_payload(payload)
+    checks = decision.get("liveness_checks")
+    if not isinstance(checks, list) or not checks:
+        return "", None
+    primary = checks[0] if isinstance(checks[0], dict) else {}
+    status = map_status(primary.get("status"))
+    score_raw = primary.get("score")
+    score: float | None
+    try:
+        score = float(score_raw) if score_raw is not None else None
+    except (TypeError, ValueError):
+        score = None
+    return status, score
+
+
 def slim_webhook(payload: dict[str, Any]) -> dict[str, Any]:
     """Status metadata only. Decision documents and media stay on Didit."""
     data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    liveness_status, liveness_score = extract_liveness(payload)
     return {
         "event_id": payload.get("event_id"),
         "webhook_type": payload.get("webhook_type") or payload.get("event"),
@@ -117,6 +146,8 @@ def slim_webhook(payload: dict[str, Any]) -> dict[str, Any]:
         "vendor_data": payload.get("vendor_data") or data.get("vendor_data"),
         "status": payload.get("status") or data.get("status"),
         "session_kind": payload.get("session_kind") or data.get("session_kind"),
+        "liveness_status": liveness_status or None,
+        "liveness_score": liveness_score,
     }
 
 
@@ -126,11 +157,14 @@ def parse_webhook(body: bytes) -> WebhookEvent:
     session_id = str(payload.get("session_id") or data.get("session_id") or "")
     vendor_data = str(payload.get("vendor_data") or data.get("vendor_data") or "")
     status = map_status(payload.get("status") or data.get("status"))
+    liveness_status, liveness_score = extract_liveness(payload)
     return WebhookEvent(
         session_id=session_id,
         vendor_data=vendor_data,
         review_status=status,
         raw=slim_webhook(payload),
+        liveness_status=liveness_status,
+        liveness_score=liveness_score,
     )
 
 

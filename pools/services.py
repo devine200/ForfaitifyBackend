@@ -18,6 +18,11 @@ from pools.models import Pool, PoolPosition, PoolWithdrawalRequest
 def deposit_into_pool(pool: Pool, investor, amount_cents: int, *, idempotency_key: str | None = None):
     if pool.closed or pool.status != Pool.Status.ACTIVE:
         raise ValidationError("Pool is not accepting deposits.")
+    if not pool.allow_public:
+        is_owner = pool.owner_investor_id == investor.id
+        has_position = PoolPosition.objects.filter(pool=pool, investor=investor).exists()
+        if not is_owner and not has_position:
+            raise ValidationError("This pool is invite-only and not open for public investment.")
     if amount_cents < pool.min_deposit_cents:
         raise ValidationError(f"Minimum deposit is {pool.min_deposit_cents} cents.")
 

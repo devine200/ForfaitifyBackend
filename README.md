@@ -1,6 +1,6 @@
 # Forfaitify Backend
 
-Django + DRF API for the Forfaitify insured invoice-financing marketplace.
+Django + DRF API for the Forfaitify verified invoice-financing marketplace.
 
 ## Stack
 

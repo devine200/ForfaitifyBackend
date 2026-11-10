@@ -18,6 +18,8 @@ class KycStatusSerializer(serializers.ModelSerializer):
             "admin_status",
             "is_fully_approved",
             "reviewed_at",
+            "liveness_status",
+            "liveness_score",
             "mode",
         )
 
@@ -57,7 +59,19 @@ class AdminMerchantSerializer(serializers.ModelSerializer):
 
     def get_kyc(self, obj):
         kyc = next((row for row in obj.user.kyc_records.all() if row.verification_kind == "kyb"), None)
-        return kyc.admin_status if kyc else "pending"
+        if not kyc:
+            return {
+                "verification_kind": "kyb",
+                "provider_status": "pending",
+                "admin_status": "pending",
+                "is_fully_approved": False,
+            }
+        return {
+            "verification_kind": kyc.verification_kind or "kyb",
+            "provider_status": kyc.provider_status,
+            "admin_status": kyc.admin_status,
+            "is_fully_approved": kyc.is_fully_approved,
+        }
 
 
 class AdminInvestorSerializer(serializers.ModelSerializer):
@@ -79,4 +93,16 @@ class AdminInvestorSerializer(serializers.ModelSerializer):
 
     def get_kyc(self, obj):
         kyc = next((row for row in obj.user.kyc_records.all() if row.verification_kind == "kyc"), None)
-        return kyc.admin_status if kyc else "pending"
+        if not kyc:
+            return {
+                "verification_kind": "kyc",
+                "provider_status": "pending",
+                "admin_status": "pending",
+                "is_fully_approved": False,
+            }
+        return {
+            "verification_kind": kyc.verification_kind or "kyc",
+            "provider_status": kyc.provider_status,
+            "admin_status": kyc.admin_status,
+            "is_fully_approved": kyc.is_fully_approved,
+        }

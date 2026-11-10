@@ -142,12 +142,16 @@ class MeSerializer(serializers.ModelSerializer):
                 "provider_status": "pending",
                 "admin_status": "pending",
                 "is_fully_approved": False,
+                "liveness_status": "",
+                "liveness_score": None,
             }
         return {
             "verification_kind": kyc.verification_kind,
             "provider_status": kyc.provider_status,
             "admin_status": kyc.admin_status,
             "is_fully_approved": kyc.is_fully_approved,
+            "liveness_status": kyc.liveness_status or "",
+            "liveness_score": kyc.liveness_score,
         }
 
     def get_merchant_profile(self, obj):

@@ -270,6 +270,27 @@ class WithdrawalView(APIView):
         if existing:
             return Response(PaymentIntentSerializer(existing).data)
 
+        from admin_ops.fees import bps_of, current_fees
+        from balances.services import merchant_unrestricted_available_cents, record_fee
+
+        fees = current_fees()
+        fee_cents = bps_of(amount, fees.withdrawal_fee_bps)
+        total_debit = amount + fee_cents
+        unrestricted = merchant_unrestricted_available_cents(request.user)
+        if unrestricted < total_debit:
+            return Response(
+                {
+                    "detail": (
+                        "Insufficient withdrawable balance. Invoice funding is pool-tagged and "
+                        "must be withdrawn via the invoice payout flow."
+                    ),
+                    "available_cents": unrestricted,
+                    "required_cents": total_debit,
+                    "withdrawal_fee_cents": fee_cents,
+                },
+                status=400,
+            )
+
         result = payment_util.create_withdrawal(
             str(request.user.id),
             amount,
@@ -288,7 +309,7 @@ class WithdrawalView(APIView):
             payout_method=method,
             requires_admin_review=True,
             idempotency_key=idem,
-            meta=result.raw or {},
+            meta={**(result.raw or {}), "withdrawal_fee_cents": fee_cents},
         )
         debit_available(
             request.user,
@@ -299,6 +320,15 @@ class WithdrawalView(APIView):
             payment_intent=intent,
             idempotency_key=f"wdr-hold-{intent.id}",
         )
+        if fee_cents:
+            record_fee(
+                request.user,
+                fee_cents,
+                destination_label="Withdrawal fee",
+                payment_intent=intent,
+                idempotency_key=f"wdr-fee-{intent.id}",
+                debit=True,
+            )
         _emit_withdrawal_submitted(request.user, intent, ser.validated_data.get("role"))
         return Response(PaymentIntentSerializer(intent).data, status=status.HTTP_201_CREATED)
 

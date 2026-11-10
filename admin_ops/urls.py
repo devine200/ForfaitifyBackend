@@ -4,6 +4,7 @@ from admin_ops import views
 
 urlpatterns = [
     path("admin/settings/fees", views.FeesView.as_view()),
+    path("admin/settings/fees/ledger", views.FeeLedgerView.as_view()),
     path("admin/settings/gateways", views.GatewayListView.as_view()),
     path("admin/settings/gateways/<uuid:pk>/primary", views.GatewayPrimaryView.as_view()),
     path("admin/settings/gateways/<uuid:pk>/disable", views.GatewayDisableView.as_view()),

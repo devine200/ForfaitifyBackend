@@ -12,7 +12,7 @@ from rest_framework.views import APIView
 from accounts.models import InvestorProfile, MerchantProfile
 from common.permissions import IsAdmin, IsMerchantOrInvestor
 from kyc.models import DiditWebhookDelivery, KycRecord, ReviewStatus
-from kyc.workflows import KYB_WORKFLOW_ID
+from kyc.workflows import KYB_WORKFLOW_ID as DEFAULT_KYB_WORKFLOW_ID
 from kyc.serializers import (
     AccountStatusSerializer,
     AdminInvestorSerializer,
@@ -36,7 +36,7 @@ class KycSessionView(APIView):
             if not request.user.has_merchant:
                 return Response({"detail": "Merchant profile required for KYB."}, status=403)
             kind = "kyb"
-            workflow_id = KYB_WORKFLOW_ID
+            workflow_id = settings.DIDIT_KYB_WORKFLOW_ID or DEFAULT_KYB_WORKFLOW_ID
         elif role == "investor":
             if not request.user.has_investor:
                 return Response({"detail": "Investor profile required for KYC."}, status=403)
@@ -110,6 +110,8 @@ class KycStatusView(APIView):
                     "admin_status": "pending",
                     "is_fully_approved": False,
                     "reviewed_at": None,
+                    "liveness_status": "",
+                    "liveness_score": None,
                     "mode": settings.DIDIT_MODE,
                 }
             )
@@ -151,18 +153,39 @@ class DiditWebhookView(APIView):
             else:
                 kyc = KycRecord.objects.filter(user_id=user_id).first()
         if kyc:
+            update_fields = [
+                "provider_session_id",
+                "provider_status",
+                "raw_webhook_payload",
+                "updated_at",
+            ]
             kyc.provider_status = event.review_status
             if event.session_id:
                 kyc.provider_session_id = event.session_id
             kyc.raw_webhook_payload = event.raw
-            kyc.save(
-                update_fields=[
-                    "provider_session_id",
-                    "provider_status",
-                    "raw_webhook_payload",
-                    "updated_at",
-                ]
-            )
+            if event.liveness_status:
+                kyc.liveness_status = event.liveness_status
+                update_fields.append("liveness_status")
+            if event.liveness_score is not None:
+                kyc.liveness_score = event.liveness_score
+                update_fields.append("liveness_score")
+            # Test mode: Didit Approved confirms admin approval so demo unlocks fully.
+            if (
+                settings.DIDIT_MODE == "test"
+                and event.review_status == ReviewStatus.APPROVED
+                and kyc.admin_status != ReviewStatus.APPROVED
+            ):
+                kyc.admin_status = ReviewStatus.APPROVED
+                kyc.reviewed_at = timezone.now()
+                kyc.reviewed_by = None
+                update_fields.extend(["admin_status", "reviewed_at", "reviewed_by"])
+                logger.info(
+                    "Didit test mode auto-confirmed admin approval session_id=%s user=%s kind=%s",
+                    event.session_id or "-",
+                    kyc.user_id,
+                    kyc.verification_kind,
+                )
+            kyc.save(update_fields=update_fields)
             from notifications.emit import emit
             from notifications.keys import key
 
@@ -221,7 +244,17 @@ class AdminMerchantKycView(APIView):
         ser.is_valid(raise_exception=True)
         merchant = MerchantProfile.objects.select_related("user").get(pk=pk)
         kyc, _ = KycRecord.objects.get_or_create(user=merchant.user, verification_kind="kyb")
-        kyc.admin_status = ser.validated_data["admin_status"]
+        next_status = ser.validated_data["admin_status"]
+        if next_status == ReviewStatus.APPROVED and kyc.provider_status != ReviewStatus.APPROVED:
+            return Response(
+                {
+                    "detail": "Didit KYB must be approved before an admin can approve this merchant.",
+                    "code": "didit_required",
+                    "provider_status": kyc.provider_status,
+                },
+                status=400,
+            )
+        kyc.admin_status = next_status
         kyc.reviewed_by = request.user
         kyc.reviewed_at = timezone.now()
         kyc.save()
@@ -285,7 +318,17 @@ class AdminInvestorKycView(APIView):
         ser.is_valid(raise_exception=True)
         investor = InvestorProfile.objects.select_related("user").get(pk=pk)
         kyc, _ = KycRecord.objects.get_or_create(user=investor.user, verification_kind="kyc")
-        kyc.admin_status = ser.validated_data["admin_status"]
+        next_status = ser.validated_data["admin_status"]
+        if next_status == ReviewStatus.APPROVED and kyc.provider_status != ReviewStatus.APPROVED:
+            return Response(
+                {
+                    "detail": "Didit KYC must be approved before an admin can approve this investor.",
+                    "code": "didit_required",
+                    "provider_status": kyc.provider_status,
+                },
+                status=400,
+            )
+        kyc.admin_status = next_status
         kyc.reviewed_by = request.user
         kyc.reviewed_at = timezone.now()
         kyc.save()

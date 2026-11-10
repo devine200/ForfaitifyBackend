@@ -21,7 +21,12 @@ User = get_user_model()
 
 
 class FeesView(APIView):
-    permission_classes = [IsAdmin]
+    """Admin can GET/PUT; authenticated merchants/investors may GET current fee schedule."""
+
+    def get_permissions(self):
+        if self.request.method == "GET":
+            return [permissions.IsAuthenticated()]
+        return [IsAdmin()]
 
     def get(self, request):
         fees = PlatformFees.objects.order_by("-effective_at").first()
@@ -36,6 +41,34 @@ class FeesView(APIView):
             lateness_fee_bps=int(request.data.get("lateness_fee_bps", 1050)),
         )
         return Response(PlatformFeesSerializer(fees).data)
+
+
+class FeeLedgerView(APIView):
+    """Sum of successful FEE ledger entries for admin visibility."""
+
+    permission_classes = [IsAdmin]
+
+    def get(self, request):
+        from django.db.models import Sum
+
+        from balances.models import BalanceTransaction
+
+        qs = BalanceTransaction.objects.filter(
+            type=BalanceTransaction.Type.FEE,
+            status=BalanceTransaction.Status.SUCCESSFUL,
+        )
+        total = qs.aggregate(s=Sum("amount_cents"))["s"] or 0
+        recent = list(
+            qs.order_by("-created_at")[:25].values(
+                "id",
+                "amount_cents",
+                "destination_label",
+                "created_at",
+                "invoice_id",
+                "pool_id",
+            )
+        )
+        return Response({"collected_fees_cents": total, "recent": recent})
 
 
 class GatewayListView(generics.ListAPIView):

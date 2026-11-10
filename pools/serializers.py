@@ -200,6 +200,12 @@ class CustomPoolCreateSerializer(serializers.Serializer):
     strategy = serializers.CharField(required=False, allow_blank=True)
     tiers = PoolLoanTierSerializer(many=True, required=False)
 
+    def validate(self, attrs):
+        auto_funding = attrs.get("auto_funding", True)
+        if auto_funding is False:
+            attrs["allow_public"] = False
+        return attrs
+
 
 class AdminPoolCreateSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=255)
@@ -210,7 +216,15 @@ class AdminPoolCreateSerializer(serializers.Serializer):
     target_return_bps = serializers.IntegerField(required=False)
     strategy = serializers.CharField(required=False, allow_blank=True)
     exposure_limit_percent = serializers.DecimalField(max_digits=5, decimal_places=2, required=False)
+    auto_funding = serializers.BooleanField(required=False, default=True)
+    allow_public = serializers.BooleanField(required=False, default=True)
     tiers = PoolLoanTierSerializer(many=True, required=False)
+
+    def validate(self, attrs):
+        auto_funding = attrs.get("auto_funding", True)
+        if auto_funding is False:
+            attrs["allow_public"] = False
+        return attrs
 
 
 class AmountSerializer(serializers.Serializer):

@@ -5,13 +5,34 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
+from django.db.models import Sum
+
+from admin_ops.fees import bps_of, current_fees
 from balances.models import BalanceTransaction
-from balances.services import credit_available, debit_available
+from balances.services import (
+    credit_available,
+    debit_available,
+    invoice_funding_remaining_cents,
+    record_fee,
+)
 from invoices.models import Invoice
 from notifications.emit import emit, invoice_room
 from notifications.formatting import format_usd
 from notifications.keys import key
-from pools.models import PoolPosition
+from pools.models import Pool, PoolPosition
+
+
+def _pool_available_liquidity_cents(pool) -> int:
+    principal = (
+        PoolPosition.objects.filter(pool=pool).aggregate(s=Sum("principal_cents"))["s"] or 0
+    )
+    deployed = (
+        Invoice.objects.filter(pool=pool, funded_amount_cents__gt=0)
+        .exclude(finance_step=Invoice.FinanceStep.FINANCE_REPAID)
+        .aggregate(s=Sum("funded_amount_cents"))["s"]
+        or 0
+    )
+    return max(0, principal - deployed)
 
 
 def generate_invoice_code() -> str:
@@ -86,17 +107,28 @@ def fund_invoice(invoice: Invoice, pool) -> Invoice:
         raise ValidationError("Invoice must be approved before funding.")
     if invoice.insurance_status != Invoice.InsuranceStatus.VERIFIED:
         raise ValidationError("Insurance must be verified before funding.")
+    if invoice.funded_amount_cents > 0 and invoice.finance_step == Invoice.FinanceStep.FINANCE_FUNDED:
+        raise ValidationError("Invoice is already funded.")
+    pool = Pool.objects.select_for_update().get(pk=pool.pk)
+    amount = invoice.loan_amount_cents
+    if amount <= 0:
+        raise ValidationError("Invoice has no loan amount to fund.")
+    liquidity = _pool_available_liquidity_cents(pool)
+    if liquidity < amount:
+        raise ValidationError(
+            f"Pool does not have enough liquidity ({liquidity} available, {amount} required)."
+        )
     invoice.pool = pool
-    invoice.funded_amount_cents = invoice.loan_amount_cents
+    invoice.funded_amount_cents = amount
     invoice.amount_left_cents = 0
-    invoice.outstanding_cents = invoice.repayment_amount_cents or invoice.loan_amount_cents
+    invoice.outstanding_cents = invoice.repayment_amount_cents or amount
     invoice.finance_step = Invoice.FinanceStep.FINANCE_FUNDED
     invoice.payout_status = Invoice.PayoutStatus.READY
     invoice.display_status = Invoice.DisplayStatus.SUCCESSFUL
     invoice.funded_at = timezone.now()
     invoice.save()
 
-    # Credit merchant balance as funding ready to withdraw conceptually stays in available
+    # Credit merchant balance tagged to this invoice + pool (segregated funding).
     credit_available(
         invoice.merchant.user,
         invoice.funded_amount_cents,
@@ -187,8 +219,10 @@ def withdraw_funding(invoice: Invoice, payout_method) -> Invoice:
         raise ValidationError("Funding is not ready to withdraw.")
     if invoice.finance_step != Invoice.FinanceStep.FINANCE_FUNDED:
         raise ValidationError("Invoice is not in a withdrawable state.")
-    if invoice.funded_amount_cents <= 0:
-        raise ValidationError("No funded amount to withdraw.")
+    remaining = invoice_funding_remaining_cents(invoice)
+    if remaining <= 0:
+        raise ValidationError("No remaining funded amount available to withdraw for this invoice.")
+    payout_amount = remaining
 
     existing_pending = PaymentIntent.objects.filter(
         invoice=invoice,
@@ -201,7 +235,7 @@ def withdraw_funding(invoice: Invoice, payout_method) -> Invoice:
     idem = f"inv-payout-{invoice.id}-{timezone.now().strftime('%Y%m%d%H%M%S')}"
     result = payment_util.create_withdrawal(
         str(invoice.merchant.user_id),
-        invoice.funded_amount_cents,
+        payout_amount,
         payout_method.account_ref,
         currency=settings.DEFAULT_CURRENCY,
         idempotency_key=idem,
@@ -209,7 +243,7 @@ def withdraw_funding(invoice: Invoice, payout_method) -> Invoice:
     intent = PaymentIntent.objects.create(
         user=invoice.merchant.user,
         kind=PaymentIntent.Kind.INVOICE_PAYOUT,
-        amount_cents=invoice.funded_amount_cents,
+        amount_cents=payout_amount,
         currency=settings.DEFAULT_CURRENCY,
         status=PaymentIntent.Status.PENDING,
         processor=result.processor,
@@ -218,14 +252,15 @@ def withdraw_funding(invoice: Invoice, payout_method) -> Invoice:
         invoice=invoice,
         requires_admin_review=True,
         idempotency_key=idem,
-        meta=result.raw or {},
+        meta={**(result.raw or {}), "pool_id": str(invoice.pool_id) if invoice.pool_id else None},
     )
     debit_available(
         invoice.merchant.user,
-        invoice.funded_amount_cents,
+        payout_amount,
         tx_type=BalanceTransaction.Type.WITHDRAWAL,
         destination_label=f"{payout_method.label} — {payout_method.account_ref[-4:]}",
         invoice=invoice,
+        pool=invoice.pool,
         payment_intent=intent,
         idempotency_key=f"inv-withdraw-hold-{invoice.id}",
         hold=True,
@@ -243,7 +278,7 @@ def withdraw_funding(invoice: Invoice, payout_method) -> Invoice:
             "category": "deposits",
             "kind": "warn",
             "title": f"Payout requested for {invoice.code}",
-            "body": f"{format_usd(invoice.funded_amount_cents)} is pending admin approval before transfer.",
+            "body": f"{format_usd(payout_amount)} is pending admin approval before transfer.",
             "href": f"/merchant/invoices/{invoice.id}",
         },
         invalidate=_merchant_invoice_keys(invoice)
@@ -252,7 +287,7 @@ def withdraw_funding(invoice: Invoice, payout_method) -> Invoice:
         email="money",
         idempotency_key=f"email:invoice.payout.submitted:{invoice.id}",
         email_context={
-            "amount_cents": invoice.funded_amount_cents,
+            "amount_cents": payout_amount,
             "invoice_code": invoice.code,
         },
     )
@@ -325,8 +360,30 @@ def mark_invoice_payout_failed(invoice: Invoice) -> Invoice:
     return invoice
 
 
-def _distribute_repayment_to_pool(invoice: Invoice, amount_cents: int) -> None:
+def _principal_already_repaid_cents(invoice: Invoice) -> int:
+    repaid = (
+        BalanceTransaction.objects.filter(
+            invoice_id=invoice.id,
+            type=BalanceTransaction.Type.REPAYMENT,
+            status=BalanceTransaction.Status.SUCCESSFUL,
+        ).aggregate(s=Sum("amount_cents"))["s"]
+        or 0
+    )
+    # Cap principal recovered at funded amount.
+    return min(repaid, invoice.funded_amount_cents or 0)
+
+
+def _distribute_repayment_to_pool(
+    invoice: Invoice,
+    amount_cents: int,
+    *,
+    principal_cents: int,
+    interest_to_investors_cents: int,
+) -> None:
     if not invoice.pool_id or amount_cents <= 0:
+        return
+    investor_amount = principal_cents + interest_to_investors_cents
+    if investor_amount <= 0:
         return
     positions = list(
         PoolPosition.objects.select_for_update()
@@ -336,12 +393,12 @@ def _distribute_repayment_to_pool(invoice: Invoice, amount_cents: int) -> None:
     total = sum(p.principal_cents for p in positions)
     if total <= 0 or not positions:
         return
-    remaining = amount_cents
+    remaining = investor_amount
     for idx, position in enumerate(positions):
         if idx == len(positions) - 1:
             share = remaining
         else:
-            share = (amount_cents * position.principal_cents) // total
+            share = (investor_amount * position.principal_cents) // total
             remaining -= share
         if share <= 0:
             continue
@@ -367,15 +424,60 @@ def repay_invoice(invoice: Invoice, amount_cents: int, *, idempotency_key: str |
         raise ValidationError("amount_cents must be positive.")
     amount_cents = min(amount_cents, invoice.outstanding_cents)
 
+    fees = current_fees()
+    principal_left = max(0, (invoice.funded_amount_cents or 0) - _principal_already_repaid_cents(invoice))
+    principal_share = min(amount_cents, principal_left)
+    interest_share = amount_cents - principal_share
+
+    platform_fee = bps_of(interest_share, fees.platform_fee_bps)
+    lateness_fee = 0
+    overdue = bool(invoice.due_date and invoice.due_date < timezone.now().date()) or (
+        invoice.repayment_state == Invoice.RepaymentState.OVERDUE
+    )
+    if overdue and interest_share > 0:
+        lateness_fee = bps_of(interest_share, fees.lateness_fee_bps)
+    # Fees cannot exceed interest slice.
+    total_fee = min(interest_share, platform_fee + lateness_fee)
+    # Prefer platform fee first, then lateness.
+    platform_fee = min(platform_fee, total_fee)
+    lateness_fee = max(0, total_fee - platform_fee)
+    interest_to_investors = interest_share - total_fee
+
     debit_available(
         invoice.merchant.user,
         amount_cents,
         tx_type=BalanceTransaction.Type.REPAYMENT,
         destination_label=f"Repayment {invoice.code}",
         invoice=invoice,
+        pool=invoice.pool,
         idempotency_key=idempotency_key or f"repay-{invoice.id}-{invoice.outstanding_cents}-{amount_cents}",
     )
-    _distribute_repayment_to_pool(invoice, amount_cents)
+    if platform_fee:
+        record_fee(
+            invoice.merchant.user,
+            platform_fee,
+            destination_label=f"Platform fee · {invoice.code}",
+            invoice=invoice,
+            pool=invoice.pool,
+            idempotency_key=f"repay-fee-{invoice.id}-{amount_cents}-{platform_fee}",
+            debit=False,
+        )
+    if lateness_fee:
+        record_fee(
+            invoice.merchant.user,
+            lateness_fee,
+            destination_label=f"Lateness fee · {invoice.code}",
+            invoice=invoice,
+            pool=invoice.pool,
+            idempotency_key=f"repay-late-{invoice.id}-{amount_cents}-{lateness_fee}",
+            debit=False,
+        )
+    _distribute_repayment_to_pool(
+        invoice,
+        amount_cents,
+        principal_cents=principal_share,
+        interest_to_investors_cents=interest_to_investors,
+    )
     invoice.outstanding_cents = max(0, invoice.outstanding_cents - amount_cents)
     if invoice.outstanding_cents == 0:
         invoice.finance_step = Invoice.FinanceStep.FINANCE_REPAID

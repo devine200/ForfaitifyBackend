@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
@@ -172,3 +174,105 @@ def try_auto_repay_after_credit(user) -> list:
     from invoices.services import auto_repay_user_invoices
 
     return auto_repay_user_invoices(user)
+
+
+def record_fee(
+    user,
+    amount_cents: int,
+    *,
+    destination_label: str = "Platform fee",
+    invoice=None,
+    pool=None,
+    payment_intent=None,
+    idempotency_key: str | None = None,
+    debit: bool = False,
+) -> BalanceTransaction | None:
+    """
+    Record a successful FEE ledger entry.
+    When debit=True, also remove funds from available (e.g. withdrawal fee).
+    When debit=False, ledger-only (e.g. protocol share already withheld from a split).
+    """
+    if amount_cents <= 0:
+        return None
+    if idempotency_key:
+        existing = BalanceTransaction.objects.filter(idempotency_key=idempotency_key).first()
+        if existing:
+            return existing
+    balance = Balance.objects.select_for_update().get(pk=get_or_create_balance(user).pk)
+    if debit:
+        if balance.available_cents < amount_cents:
+            raise ValidationError("Insufficient available balance for fee.")
+        balance.available_cents -= amount_cents
+        balance.save(update_fields=["available_cents", "updated_at"])
+    return BalanceTransaction.objects.create(
+        balance=balance,
+        type=BalanceTransaction.Type.FEE,
+        status=BalanceTransaction.Status.SUCCESSFUL,
+        amount_cents=amount_cents,
+        destination_label=destination_label,
+        invoice=invoice,
+        pool=pool,
+        payment_intent=payment_intent,
+        idempotency_key=idempotency_key,
+    )
+
+
+def invoice_funding_remaining_cents(invoice) -> int:
+    """Funded credits for an invoice minus successful/pending withdrawals tagged to it."""
+    from django.db.models import Sum
+
+    funded = (
+        BalanceTransaction.objects.filter(
+            invoice_id=invoice.id,
+            type=BalanceTransaction.Type.FUNDING,
+            status=BalanceTransaction.Status.SUCCESSFUL,
+        ).aggregate(s=Sum("amount_cents"))["s"]
+        or 0
+    )
+    withdrawn = (
+        BalanceTransaction.objects.filter(
+            invoice_id=invoice.id,
+            type=BalanceTransaction.Type.WITHDRAWAL,
+            status__in=[
+                BalanceTransaction.Status.SUCCESSFUL,
+                BalanceTransaction.Status.PENDING,
+                BalanceTransaction.Status.PROCESSING,
+            ],
+        ).aggregate(s=Sum("amount_cents"))["s"]
+        or 0
+    )
+    return max(0, funded - withdrawn)
+
+
+def merchant_unrestricted_available_cents(user) -> int:
+    """Available balance excluding unretracted invoice funding credits."""
+    from django.db.models import Sum
+
+    from invoices.models import Invoice
+
+    balance = get_or_create_balance(user)
+    locked = 0
+    invoice_ids = Invoice.objects.filter(merchant__user=user).values_list("id", flat=True)
+    for inv_id in invoice_ids:
+        funded = (
+            BalanceTransaction.objects.filter(
+                invoice_id=inv_id,
+                type=BalanceTransaction.Type.FUNDING,
+                status=BalanceTransaction.Status.SUCCESSFUL,
+            ).aggregate(s=Sum("amount_cents"))["s"]
+            or 0
+        )
+        withdrawn = (
+            BalanceTransaction.objects.filter(
+                invoice_id=inv_id,
+                type=BalanceTransaction.Type.WITHDRAWAL,
+                status__in=[
+                    BalanceTransaction.Status.SUCCESSFUL,
+                    BalanceTransaction.Status.PENDING,
+                    BalanceTransaction.Status.PROCESSING,
+                ],
+            ).aggregate(s=Sum("amount_cents"))["s"]
+            or 0
+        )
+        locked += max(0, funded - withdrawn)
+    return max(0, balance.available_cents - locked)

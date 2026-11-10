@@ -55,6 +55,13 @@ class KycRecord(UUIDModel):
         related_name="kyc_reviews",
     )
     reviewed_at = models.DateTimeField(null=True, blank=True)
+    liveness_status = models.CharField(
+        max_length=16,
+        choices=ReviewStatus.choices,
+        blank=True,
+        default="",
+    )
+    liveness_score = models.FloatField(null=True, blank=True)
     raw_webhook_payload = models.JSONField(null=True, blank=True)
 
     class Meta:
